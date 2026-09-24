@@ -43,6 +43,32 @@
     .accept-bar p { color: var(--muted); font-size: 14px; }
     .stats { display: flex; gap: 16px; }
 
+    .avail-toggle {
+      display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--surface);
+      border-radius: 999px; padding: 6px 12px 6px 10px; font: 500 13px var(--sans); color: var(--muted); cursor: pointer;
+    }
+    .avail-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+    .avail-toggle.on { color: var(--brand); border-color: #bcd3cc; background: var(--brand-soft); }
+    .avail-toggle.on .avail-dot { background: #2f9e6e; box-shadow: 0 0 0 3px rgba(47, 158, 110, .18); }
+
+    .notify-banner {
+      margin: 12px 14px 4px; padding: 12px 14px; border-radius: 10px; background: var(--accent-soft);
+      color: #7a4a33; font-size: 13px; display: flex; flex-direction: column; gap: 8px;
+    }
+    .notify-banner .btn { align-self: flex-start; }
+
+    .toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 50; }
+    .toast {
+      display: flex; align-items: center; gap: 12px; width: 360px; max-width: calc(100vw - 40px);
+      background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(29, 42, 44, .16); padding: 12px 10px 12px 16px; animation: toast-in .25s ease-out;
+    }
+    .toast-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); flex: none; }
+    .toast-text { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 13px; color: var(--muted); }
+    .toast-text strong { color: var(--ink); font-size: 14px; font-weight: 600; }
+    .toast-close { border: 0; background: transparent; color: var(--faint); font-size: 20px; line-height: 1; cursor: pointer; padding: 2px 6px; }
+    @keyframes toast-in { from { transform: translateY(12px); opacity: 0; } }
+
     @media (max-width: 800px) {
       .dashboard { grid-template-columns: 1fr; grid-template-rows: 40% 60%; }
       .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -56,6 +82,9 @@
       Theripo <span class="tag tag-muted" style="font-family: var(--sans)">Therapist</span>
     </a>
     <div class="header-meta" id="header-user" hidden>
+      <button class="avail-toggle on" id="avail-btn" type="button" title="Available therapists are alerted when someone joins the waiting room">
+        <span class="avail-dot"></span><span id="avail-label">Available</span>
+      </button>
       <span>Signed in as <strong id="me-name" style="color: var(--ink)"></strong></span>
       <button class="btn btn-ghost btn-sm" id="logout-btn">Sign out</button>
     </div>
@@ -83,6 +112,10 @@
   <section id="view-dashboard" class="dashboard" hidden>
     <aside class="sidebar">
       <div class="sidebar-scroll">
+        <div class="notify-banner" id="notify-banner" hidden>
+          <span>Turn on desktop notifications to hear about new clients even when this tab is in the background.</span>
+          <button class="btn btn-sm" type="button" id="notify-enable">Turn on notifications</button>
+        </div>
         <div class="section-title">Waiting room <span class="count" id="waiting-count">0</span></div>
         <div id="waiting-list"></div>
         <div class="section-title">Your conversations</div>
@@ -123,6 +156,8 @@
       </div>
     </div>
   </section>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <script src="/common.js"></script>
   <script>
@@ -170,6 +205,8 @@
       try { sessionStorage.removeItem(STORAGE_KEY); } catch {}
       $('login-form').reset();
       $('header-user').hidden = true;
+      $('toasts').replaceChildren();
+      document.title = 'Theripo — Therapist dashboard';
       $('view-dashboard').hidden = true;
       $('view-login').hidden = false;
     }
@@ -181,6 +218,8 @@
       $('header-user').hidden = false;
       $('view-login').hidden = true;
       $('view-dashboard').hidden = false;
+      renderAvailability();
+      renderNotifyBanner();
       connect();
     }
 
@@ -197,9 +236,93 @@
         const { sessionId, message } = JSON.parse(e.data);
         addMessage(sessionId, message);
       });
+      stream.addEventListener('new-client', (e) => alertNewClient(JSON.parse(e.data)));
       stream.onerror = async () => {
         try { await api('/api/therapist/me', { token }); } catch (err) { if (err.status === 401) signOut(); }
       };
+    }
+
+    // ----- Availability & new-client alerts -----
+    function renderAvailability() {
+      $('avail-btn').classList.toggle('on', me.available);
+      $('avail-label').textContent = me.available ? 'Available' : 'Away';
+    }
+
+    $('avail-btn').addEventListener('click', async () => {
+      try {
+        const { therapist } = await api('/api/therapist/availability', { method: 'POST', token, body: { available: !me.available } });
+        me.available = therapist.available;
+        renderAvailability();
+      } catch (err) {
+        if (err.status === 401) signOut(); else alert(err.message);
+      }
+    });
+
+    function renderNotifyBanner() {
+      $('notify-banner').hidden = !('Notification' in window) || Notification.permission !== 'default';
+    }
+
+    $('notify-enable').addEventListener('click', async () => {
+      try { await Notification.requestPermission(); } catch {}
+      renderNotifyBanner();
+    });
+
+    // Browsers only allow sound after the user has interacted with the page.
+    let audioCtx = null;
+    function unlockAudio() {
+      try {
+        audioCtx ??= new AudioContext();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+      } catch {}
+    }
+    document.addEventListener('pointerdown', unlockAudio);
+    document.addEventListener('keydown', unlockAudio);
+
+    function chime() {
+      unlockAudio();
+      if (!audioCtx) return;
+      const now = audioCtx.currentTime;
+      [[659.25, 0], [880, 0.16]].forEach(([freq, delay]) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, now + delay);
+        gain.gain.exponentialRampToValueAtTime(0.25, now + delay + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + delay + 0.6);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(now + delay);
+        osc.stop(now + delay + 0.65);
+      });
+    }
+
+    function alertNewClient(s) {
+      chime();
+      showToast(s);
+      // System notification only when the dashboard isn't in front. It leaves out
+      // what the client wrote, since notifications can appear on a lock screen.
+      if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+        const n = new Notification(`${s.clientName} needs someone to talk to`, {
+          body: `Topic: ${s.topic}. Open Theripo to respond.`,
+          tag: s.id,
+        });
+        n.onclick = () => { window.focus(); select(s.id); n.close(); };
+      }
+    }
+
+    function showToast(s) {
+      const toast = el('div', 'toast');
+      const text = el('div', 'toast-text');
+      text.append(el('strong', null, `${s.clientName} joined the waiting room`), el('span', null, s.topic));
+      const view = el('button', 'btn btn-sm', 'View');
+      view.type = 'button';
+      view.addEventListener('click', () => { select(s.id); toast.remove(); });
+      const close = el('button', 'toast-close', '×');
+      close.type = 'button';
+      close.setAttribute('aria-label', 'Dismiss');
+      close.addEventListener('click', () => toast.remove());
+      toast.append(el('span', 'toast-dot'), text, view, close);
+      $('toasts').appendChild(toast);
+      setTimeout(() => toast.remove(), 15000);
     }
 
     function addMessage(sessionId, message) {
@@ -227,6 +350,7 @@
       });
 
       $('waiting-count').textContent = waiting.length;
+      document.title = waiting.length ? `(${waiting.length}) waiting · Theripo` : 'Theripo — Therapist dashboard';
       fillList($('waiting-list'), waiting, 'Nobody is waiting right now.', (s) => s.details);
       fillList($('mine-list'), mine, 'Accepted conversations will appear here.', (s) =>
         s.lastMessage ? `${s.lastMessage.from === 'therapist' ? 'You: ' : ''}${s.lastMessage.text}` : s.details);
