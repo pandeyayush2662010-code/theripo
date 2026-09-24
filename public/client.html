@@ -184,7 +184,7 @@
 
     function renderAll() {
       const box = $('messages');
-      box.replaceChildren(...session.messages.map((m) => renderMessage(m, 'client')));
+      box.replaceChildren(...session.messages.map((m) => renderMessage(m, 'client', mediaUrl)));
       scrollToBottom(box);
     }
 
@@ -192,7 +192,7 @@
       if (session.messages.some((m) => m.id === message.id)) return;
       session.messages.push(message);
       const box = $('messages');
-      box.appendChild(renderMessage(message, 'client'));
+      box.appendChild(renderMessage(message, 'client', mediaUrl));
       scrollToBottom(box);
     }
 
@@ -220,6 +220,12 @@
 
     // ----- Chat actions -----
     const clearComposer = wireComposer($('message-input'), () => $('composer').requestSubmit());
+    const mediaUrl = (id) => `/api/media/${id}?token=${encodeURIComponent(token)}`;
+
+    enhanceComposer($('composer'), $('message-input'), async (file) => {
+      const { message } = await uploadMedia('/api/client/media', file, token);
+      addIncoming(message);
+    });
 
     $('composer').addEventListener('submit', async (e) => {
       e.preventDefault();
