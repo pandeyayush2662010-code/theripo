@@ -1,0 +1,10 @@
+{
+  "name": "theripo",
+  "version": "1.0.0",
+  "description": "Anonymous online therapy chat — school project demo",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT"
+}
