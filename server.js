@@ -137,6 +137,13 @@ function broadcastSessions() {
   }
 }
 
+// Alerts every signed-in therapist who has marked themselves available.
+function notifyAvailableTherapists(session) {
+  for (const { res, therapist } of therapistStreams) {
+    if (therapist.available) emit(res, 'new-client', summaryView(session));
+  }
+}
+
 function broadcastMessage(session, message) {
   for (const res of clientStreams.get(session.id) || []) emit(res, 'message', message);
   for (const { res, therapist } of therapistStreams) {
@@ -306,6 +313,7 @@ async function handleClient(req, res, url, route) {
     const token = newId(18);
     clientTokens.set(token, session.id);
     broadcastSessions();
+    notifyAvailableTherapists(session);
     return sendJson(res, 201, { token, session: fullView(session) });
   }
 
@@ -360,7 +368,7 @@ async function handleTherapist(req, res, url, parts) {
     const name = clean(body.name, 40);
     if (!name) return sendJson(res, 400, { error: 'Please enter a display name.' });
     if (hashCode(clean(body.code, 100)) !== THERAPIST_CODE_HASH) return sendJson(res, 401, { error: 'That access code is not valid.' });
-    const therapist = { id: newId(), name };
+    const therapist = { id: newId(), name, available: true };
     const token = newId(18);
     therapists.set(token, therapist);
     return sendJson(res, 200, { token, therapist });
@@ -373,6 +381,11 @@ async function handleTherapist(req, res, url, parts) {
   if (route === 'logout' && req.method === 'POST') {
     therapists.delete(token);
     return sendJson(res, 200, { ok: true });
+  }
+
+  if (route === 'availability' && req.method === 'POST') {
+    therapist.available = Boolean((await readBody(req)).available);
+    return sendJson(res, 200, { therapist });
   }
 
   if (route === 'me' && req.method === 'GET') {
