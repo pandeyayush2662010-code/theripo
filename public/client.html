@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Theripo — Start a conversation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    body { display: flex; flex-direction: column; min-height: 100vh; }
+    main { flex: 1 0 auto; display: flex; }
+    .center-wrap { flex: 1; min-height: 0; }
+    .chat-wrap { flex: 1; display: flex; justify-content: center; padding: 24px 16px; min-height: 0; }
+    .chat-card { width: 100%; max-width: 820px; height: calc(100vh - 67px - 48px); overflow: hidden; }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/">
+      <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg></span>
+      Theripo
+    </a>
+    <div class="header-meta"><span class="tag">Anonymous session</span></div>
+  </header>
+
+  <main>
+    <!-- Step 1: intake -->
+    <section id="view-intake" class="center-wrap" hidden>
+      <form id="intake-form" class="card form-card" novalidate>
+        <h1>What's on your mind?</h1>
+        <p class="lede">Tell us a little so your therapist knows where to start. You don't need to give your real name.</p>
+
+        <div id="intake-error" class="error" hidden></div>
+
+        <div class="field">
+          <label for="name">What should we call you?</label>
+          <input id="name" type="text" maxlength="40" placeholder="e.g. Sky, Alex, or anything you like" autocomplete="off">
+        </div>
+
+        <div class="field">
+          <label>What would you like to talk about?</label>
+          <div class="chips" id="topics"></div>
+        </div>
+
+        <div class="field">
+          <label for="details">Tell us a bit more</label>
+          <textarea id="details" maxlength="2000" placeholder="Share as much or as little as you're comfortable with."></textarea>
+        </div>
+
+        <button class="btn btn-block" type="submit" id="start-btn">Find a therapist</button>
+
+        <div class="privacy-note">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          <span>No email, phone number, or account. Your conversation is never saved and disappears when the session ends.</span>
+        </div>
+      </form>
+    </section>
+
+    <!-- Step 2: waiting room -->
+    <section id="view-waiting" class="center-wrap" hidden>
+      <div class="card waiting">
+        <div class="pulse"><span></span></div>
+        <h2>Finding someone for you</h2>
+        <p>Hang tight, <strong id="waiting-name"></strong>. A therapist will join as soon as they're available.</p>
+        <p class="queue" id="queue-text"></p>
+        <button class="btn btn-ghost btn-sm" id="cancel-btn">Leave waiting room</button>
+      </div>
+    </section>
+
+    <!-- Step 3: chat -->
+    <section id="view-chat" class="chat-wrap" hidden>
+      <div class="card chat-card">
+        <div class="chat-shell">
+          <div class="chat-head">
+            <div class="who">
+              <div class="avatar brand" id="therapist-avatar"></div>
+              <div>
+                <h2 id="therapist-name"></h2>
+                <div class="sub" id="chat-sub"></div>
+              </div>
+            </div>
+            <button class="btn btn-danger btn-sm" id="end-btn">End conversation</button>
+          </div>
+          <div class="messages" id="messages"></div>
+          <form class="composer" id="composer">
+            <textarea id="message-input" rows="1" placeholder="Type a message…" maxlength="2000"></textarea>
+            <button class="btn" type="submit">Send</button>
+          </form>
+          <div class="composer-note" id="ended-note" hidden>
+            This conversation has ended. Take care of yourself. &nbsp;<a href="#" id="restart-link">Start a new conversation</a>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="crisis" id="footer">
+    Not an emergency service. If you are in danger, call your local emergency number or 988 (US Suicide &amp; Crisis Lifeline).
+  </footer>
+
+  <script src="/common.js"></script>
+  <script>
+    const TOPICS = ['Stress', 'Anxiety', 'Academic pressure', 'Relationships', 'Family', 'Loneliness', 'Self-esteem', 'Something else'];
+    const STORAGE_KEY = 'theripo.client.token';
+
+    const $ = (id) => document.getElementById(id);
+    const views = { intake: $('view-intake'), waiting: $('view-waiting'), chat: $('view-chat') };
+
+    let token = null;
+    let session = null;
+    let stream = null;
+
+    function show(name) {
+      for (const [key, node] of Object.entries(views)) node.hidden = key !== name;
+      $('footer').hidden = name === 'chat';
+    }
+
+    // ----- Intake form -----
+    TOPICS.forEach((topic, i) => {
+      const label = el('label', 'chip-option');
+      const input = el('input');
+      input.type = 'radio';
+      input.name = 'topic';
+      input.value = topic;
+      if (i === 0) input.checked = true;
+      label.append(input, el('span', null, topic));
+      $('topics').appendChild(label);
+    });
+
+    $('intake-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errorBox = $('intake-error');
+      errorBox.hidden = true;
+      $('start-btn').disabled = true;
+      try {
+        const data = await api('/api/client/start', {
+          method: 'POST',
+          body: {
+            name: $('name').value,
+            topic: document.querySelector('input[name="topic"]:checked')?.value,
+            details: $('details').value,
+          },
+        });
+        token = data.token;
+        try { sessionStorage.setItem(STORAGE_KEY, token); } catch {}
+        setSession(data.session);
+        connect();
+      } catch (err) {
+        errorBox.textContent = err.message;
+        errorBox.hidden = false;
+      } finally {
+        $('start-btn').disabled = false;
+      }
+    });
+
+    // ----- Session state -----
+    function setSession(next) {
+      const messages = next.messages || session?.messages || [];
+      session = { ...next, messages };
+
+      if (session.status === 'waiting') {
+        $('waiting-name').textContent = session.clientName;
+        $('queue-text').textContent = session.queuePosition <= 1
+          ? "You're next in line."
+          : `You're #${session.queuePosition} in line.`;
+        show('waiting');
+        return;
+      }
+
+      $('therapist-name').textContent = session.therapistName || 'Therapist';
+      $('therapist-avatar').textContent = initials(session.therapistName);
+      const ended = session.status === 'ended';
+      $('chat-sub').textContent = ended ? 'Conversation ended' : `Talking about ${session.topic.toLowerCase()}`;
+      $('composer').hidden = ended;
+      $('ended-note').hidden = !ended;
+      $('end-btn').hidden = ended;
+
+      const wasHidden = views.chat.hidden;
+      show('chat');
+      if (next.messages || wasHidden) renderAll();
+      if (wasHidden && !ended) $('message-input').focus();
+    }
+
+    function renderAll() {
+      const box = $('messages');
+      box.replaceChildren(...session.messages.map((m) => renderMessage(m, 'client')));
+      scrollToBottom(box);
+    }
+
+    function addIncoming(message) {
+      if (session.messages.some((m) => m.id === message.id)) return;
+      session.messages.push(message);
+      const box = $('messages');
+      box.appendChild(renderMessage(message, 'client'));
+      scrollToBottom(box);
+    }
+
+    function connect() {
+      stream?.close();
+      stream = new EventSource(`/api/client/stream?token=${encodeURIComponent(token)}`);
+      stream.addEventListener('session', (e) => setSession(JSON.parse(e.data)));
+      stream.addEventListener('message', (e) => addIncoming(JSON.parse(e.data)));
+      stream.onerror = async () => {
+        // The server may have restarted and forgotten this session.
+        try { await api('/api/client/session', { token }); } catch (err) { if (err.status === 401) reset(); }
+      };
+    }
+
+    function reset() {
+      stream?.close();
+      stream = null;
+      token = null;
+      session = null;
+      try { sessionStorage.removeItem(STORAGE_KEY); } catch {}
+      $('intake-form').reset();
+      document.querySelector('input[name="topic"]').checked = true;
+      show('intake');
+    }
+
+    // ----- Chat actions -----
+    const clearComposer = wireComposer($('message-input'), () => $('composer').requestSubmit());
+
+    $('composer').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = $('message-input').value.trim();
+      if (!text) return;
+      clearComposer();
+      try {
+        const { message } = await api('/api/client/message', { method: 'POST', token, body: { text } });
+        addIncoming(message);
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+
+    async function endSession() {
+      try { await api('/api/client/end', { method: 'POST', token }); } catch {}
+    }
+
+    $('end-btn').addEventListener('click', async () => {
+      if (confirm('End this conversation? You can always start a new one.')) await endSession();
+    });
+
+    $('cancel-btn').addEventListener('click', async () => {
+      await endSession();
+      reset();
+    });
+
+    $('restart-link').addEventListener('click', (e) => {
+      e.preventDefault();
+      reset();
+    });
+
+    // ----- Resume after refresh -----
+    (async function init() {
+      let saved = null;
+      try { saved = sessionStorage.getItem(STORAGE_KEY); } catch {}
+      if (!saved) return show('intake');
+      try {
+        token = saved;
+        const data = await api('/api/client/session', { token });
+        setSession(data.session);
+        connect();
+      } catch {
+        reset();
+      }
+    })();
+  </script>
+</body>
+</html>
