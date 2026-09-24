@@ -17,16 +17,52 @@ const clientTokens = new Map();   // token -> sessionId
 const therapists = new Map();     // token -> { id, name }
 const clientStreams = new Map();  // sessionId -> Set<res>
 const therapistStreams = new Set(); // { res, therapist }
+const media = new Map();          // mediaId -> { sessionId, type, data }
+
+// Photos, voice notes and videos are kept in memory too, so cap their size.
+const MEDIA_KINDS = {
+  image: { label: 'Photo', maxBytes: 8 * 1024 * 1024 },
+  audio: { label: 'Voice note', maxBytes: 10 * 1024 * 1024 },
+  video: { label: 'Video', maxBytes: 30 * 1024 * 1024 },
+};
+const MEDIA_TOTAL_LIMIT = 250 * 1024 * 1024;
+let mediaBytes = 0;
 
 const newId = (bytes = 9) => crypto.randomBytes(bytes).toString('base64url');
 const clean = (value, max) => String(value ?? '').trim().slice(0, max);
 
-function addMessage(session, from, name, text) {
+function addMessage(session, from, name, text, attachment = null) {
   const message = { id: newId(6), from, name, text, at: Date.now() };
+  if (attachment) message.media = attachment;
   session.messages.push(message);
   session.updatedAt = message.at;
   return message;
 }
+
+function deleteSession(session) {
+  for (const m of session.messages) {
+    const stored = m.media && media.get(m.media.id);
+    if (stored) {
+      mediaBytes -= stored.data.length;
+      media.delete(m.media.id);
+    }
+  }
+  sessions.delete(session.id);
+  for (const [token, id] of clientTokens) if (id === session.id) clientTokens.delete(token);
+}
+
+// Forget conversations an hour after they end, along with their files.
+setInterval(() => {
+  const cutoff = Date.now() - 60 * 60 * 1000;
+  let removed = false;
+  for (const s of sessions.values()) {
+    if (s.status === 'ended' && s.updatedAt < cutoff) {
+      deleteSession(s);
+      removed = true;
+    }
+  }
+  if (removed) broadcastSessions();
+}, 10 * 60 * 1000).unref();
 
 function queuePosition(session) {
   if (session.status !== 'waiting') return 0;
@@ -125,6 +161,99 @@ function readBody(req) {
   });
 }
 
+// Reads a binary body; resolves null if it grows past `limit`.
+function readRaw(req, limit) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    let size = 0;
+    let tooBig = false;
+    req.on('data', (chunk) => {
+      if (tooBig) return;
+      size += chunk.length;
+      if (size > limit) {
+        tooBig = true;
+        chunks.length = 0;
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(tooBig ? null : Buffer.concat(chunks)));
+    req.on('error', () => resolve(null));
+  });
+}
+
+async function receiveMedia(req, res, session, from, name) {
+  if (session.status !== 'active') {
+    req.resume();
+    return sendJson(res, 409, { error: 'This conversation is not active.' });
+  }
+  const type = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  const kind = type.split('/')[0];
+  const rules = MEDIA_KINDS[kind];
+  if (!rules || type.includes('svg')) {
+    req.resume();
+    return sendJson(res, 415, { error: 'Only photos, screenshots, voice notes and videos can be sent.' });
+  }
+
+  const tooBig = { error: `${rules.label}s can be up to ${rules.maxBytes / 1024 / 1024} MB.` };
+  if (Number(req.headers['content-length'] || 0) > rules.maxBytes) {
+    req.resume();
+    return sendJson(res, 413, tooBig);
+  }
+  const data = await readRaw(req, rules.maxBytes);
+  if (!data) return sendJson(res, 413, tooBig);
+  if (!data.length) return sendJson(res, 400, { error: 'That file is empty.' });
+  if (mediaBytes + data.length > MEDIA_TOTAL_LIMIT) {
+    return sendJson(res, 507, { error: 'The server is out of space for files right now. Please try again later.' });
+  }
+
+  let fileName = '';
+  try { fileName = clean(decodeURIComponent(req.headers['x-file-name'] || ''), 120); } catch {}
+
+  const id = newId(12);
+  media.set(id, { sessionId: session.id, type, data });
+  mediaBytes += data.length;
+  const message = addMessage(session, from, name, rules.label, { id, kind, type, size: data.length, name: fileName });
+  broadcastMessage(session, message);
+  broadcastSessions();
+  return sendJson(res, 201, { message });
+}
+
+// Files are only visible to the client of that session and the therapist who accepted it.
+// Supports Range requests so audio and video can seek (Safari requires this).
+function serveMedia(req, res, url, mediaId) {
+  const item = media.get(mediaId);
+  const session = item && sessions.get(item.sessionId);
+  const token = tokenFrom(req, url);
+  const allowed = session && (
+    clientTokens.get(token) === session.id ||
+    (session.therapistId && therapists.get(token)?.id === session.therapistId)
+  );
+  if (!allowed) return sendJson(res, 404, { error: 'File not found.' });
+
+  const total = item.data.length;
+  const headers = {
+    'Content-Type': item.type,
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'private, max-age=3600',
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Security-Policy': 'sandbox',
+  };
+  const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+  if (range) {
+    const start = range[1] ? Number(range[1]) : total - Number(range[2]);
+    const end = range[1] && range[2] ? Math.min(Number(range[2]), total - 1) : total - 1;
+    if (!(start >= 0 && start <= end)) {
+      res.writeHead(416, { 'Content-Range': `bytes */${total}` });
+      return res.end();
+    }
+    res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${total}`, 'Content-Length': end - start + 1 });
+    return res.end(item.data.subarray(start, end + 1));
+  }
+  res.writeHead(200, { ...headers, 'Content-Length': total });
+  res.end(item.data);
+}
+
 function tokenFrom(req, url) {
   const header = req.headers.authorization || '';
   if (header.startsWith('Bearer ')) return header.slice(7);
@@ -201,6 +330,10 @@ async function handleClient(req, res, url, route) {
     broadcastMessage(session, message);
     broadcastSessions();
     return sendJson(res, 201, { message });
+  }
+
+  if (route === 'media' && req.method === 'POST') {
+    return receiveMedia(req, res, session, 'client', session.clientName);
   }
 
   if (route === 'end' && req.method === 'POST') {
@@ -289,6 +422,10 @@ async function handleTherapist(req, res, url, parts) {
     return sendJson(res, 201, { message });
   }
 
+  if (action === 'media' && req.method === 'POST') {
+    return receiveMedia(req, res, session, 'therapist', therapist.name);
+  }
+
   if (action === 'end' && req.method === 'POST') {
     if (session.status !== 'ended') {
       session.status = 'ended';
@@ -306,6 +443,10 @@ async function handleTherapist(req, res, url, parts) {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const parts = url.pathname.split('/').filter(Boolean);
+
+  if (parts[0] === 'api' && parts[1] === 'media' && req.method === 'GET') {
+    return serveMedia(req, res, url, parts[2]);
+  }
 
   if (parts[0] === 'api') {
     const handler = parts[1] === 'client' ? handleClient(req, res, url, parts[2])
