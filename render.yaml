@@ -5,6 +5,3 @@ services:
     plan: free
     buildCommand: "true"
     startCommand: node server.js
-    envVars:
-      - key: THERAPIST_CODE
-        value: care2026
