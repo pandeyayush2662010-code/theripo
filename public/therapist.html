@@ -213,7 +213,7 @@
       }
       if (sessionId === selectedId) {
         const box = $('messages');
-        box.appendChild(renderMessage(message, 'therapist'));
+        box.appendChild(renderMessage(message, 'therapist', mediaUrl));
         scrollToBottom(box);
       } else if (message.from === 'client') {
         unread.set(sessionId, (unread.get(sessionId) || 0) + 1);
@@ -307,7 +307,7 @@
       const intake = el('div', 'intake');
       intake.append(el('div', 'label', `Intake · ${s.topic}`), el('p', null, s.details));
       const box = $('messages');
-      box.replaceChildren(intake, ...s.messages.map((m) => renderMessage(m, 'therapist')));
+      box.replaceChildren(intake, ...s.messages.map((m) => renderMessage(m, 'therapist', mediaUrl)));
       scrollToBottom(box);
       renderChrome(s);
     }
@@ -346,6 +346,13 @@
     });
 
     const clearComposer = wireComposer($('message-input'), () => $('composer').requestSubmit());
+    const mediaUrl = (id) => `/api/media/${id}?token=${encodeURIComponent(token)}`;
+
+    enhanceComposer($('composer'), $('message-input'), async (file) => {
+      const id = selectedId;
+      const { message } = await uploadMedia(`/api/therapist/sessions/${id}/media`, file, token);
+      addMessage(id, message);
+    });
 
     $('composer').addEventListener('submit', async (e) => {
       e.preventDefault();
