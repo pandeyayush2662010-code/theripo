@@ -14,7 +14,7 @@ Then open:
 
 - http://localhost:3000 — landing page
 - http://localhost:3000/client — client side
-- http://localhost:3000/therapist — therapist dashboard (demo access code: `care2026`)
+- http://localhost:3000/therapist — therapist dashboard (needs the staff access code)
 
 To try both sides at once, open the client page and the therapist page in two separate browser tabs.
 
@@ -23,6 +23,10 @@ To try both sides at once, open the client page and the therapist page in two se
 - `server.js` — plain Node HTTP server. Stores sessions in memory and pushes live updates with Server-Sent Events.
 - `public/` — static pages (`index.html`, `client.html`, `therapist.html`), shared `styles.css` and `common.js`.
 
-Everything is in memory, including shared files, so restarting the server wipes all conversations. Ended conversations and their files are also deleted an hour after they end. Files can only be opened by the client and therapist in that conversation. Change the access code with `THERAPIST_CODE=yourcode npm start`.
+Everything is in memory, including shared files, so restarting the server wipes all conversations. Ended conversations and their files are also deleted an hour after they end. Files can only be opened by the client and therapist in that conversation. Only a SHA-256 hash of the therapist access code is stored in `server.js`. To use a different code, set `THERAPIST_CODE_HASH` to the hash of the new code:
+
+```bash
+node -e "console.log(require('crypto').createHash('sha256').update('your code').digest('hex'))"
+```
 
 This is a demo and not a real mental-health service.
