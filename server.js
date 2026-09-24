@@ -8,7 +8,9 @@ const path = require('path');
 const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
-const THERAPIST_CODE = process.env.THERAPIST_CODE || 'care2026';
+// Only a SHA-256 hash of the therapist access code is stored, so the code itself never appears in the repo.
+const THERAPIST_CODE_HASH = process.env.THERAPIST_CODE_HASH || '107f80de5db83130572bfb3e9bd3ef1fd8345ecfb3b6d0cfb84b633e3faf5077';
+const hashCode = (code) => crypto.createHash('sha256').update(code).digest('hex');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 // ---------- In-memory store ----------
@@ -357,7 +359,7 @@ async function handleTherapist(req, res, url, parts) {
     const body = await readBody(req);
     const name = clean(body.name, 40);
     if (!name) return sendJson(res, 400, { error: 'Please enter a display name.' });
-    if (clean(body.code, 100) !== THERAPIST_CODE) return sendJson(res, 401, { error: 'That access code is not valid.' });
+    if (hashCode(clean(body.code, 100)) !== THERAPIST_CODE_HASH) return sendJson(res, 401, { error: 'That access code is not valid.' });
     const therapist = { id: newId(), name };
     const token = newId(18);
     therapists.set(token, therapist);
@@ -465,5 +467,5 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
   console.log(`Theripo running at http://localhost:${PORT}`);
   console.log(`  Client page:    http://localhost:${PORT}/client`);
-  console.log(`  Therapist page: http://localhost:${PORT}/therapist  (access code: ${THERAPIST_CODE})`);
+  console.log(`  Therapist page: http://localhost:${PORT}/therapist`);
 });
