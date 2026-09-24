@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Theripo — Therapist dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    body { display: flex; flex-direction: column; height: 100vh; }
+    .demo-hint { margin-top: 14px; font-size: 13px; color: var(--muted); text-align: center; }
+    .demo-hint code { background: var(--brand-soft); color: var(--brand); padding: 2px 6px; border-radius: 5px; }
+
+    .dashboard { flex: 1; min-height: 0; display: grid; grid-template-columns: 330px 1fr; }
+    .sidebar { border-right: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+    .sidebar-scroll { overflow-y: auto; flex: 1; padding: 8px 0 20px; }
+    .section-title {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 20px 8px; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--faint);
+    }
+    .count { background: var(--accent-soft); color: #9a5d40; border-radius: 999px; padding: 1px 8px; font-size: 12px; letter-spacing: 0; }
+    .list-empty { padding: 6px 20px 10px; color: var(--faint); font-size: 13px; }
+
+    .item {
+      display: flex; gap: 12px; align-items: flex-start; width: 100%; text-align: left; cursor: pointer;
+      padding: 12px 20px; border: 0; background: transparent; font: inherit; color: inherit; border-left: 3px solid transparent;
+    }
+    .item:hover { background: var(--surface-2); }
+    .item.selected { background: var(--brand-soft); border-left-color: var(--brand); }
+    .item .avatar { width: 36px; height: 36px; font-size: 14px; }
+    .item .body { flex: 1; min-width: 0; }
+    .item .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .item .name { font-weight: 600; font-size: 14px; }
+    .item .time { color: var(--faint); font-size: 12px; flex: none; }
+    .item .preview { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+    .item .tags { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
+    .badge { background: var(--brand); color: #fff; border-radius: 999px; font-size: 11px; font-weight: 600; min-width: 18px; height: 18px; padding: 0 5px; display: inline-grid; place-items: center; }
+
+    .main { min-height: 0; display: flex; flex-direction: column; background: var(--surface-2); }
+    .empty { flex: 1; display: grid; place-items: center; text-align: center; padding: 24px; color: var(--muted); }
+    .empty h2 { color: var(--ink); font-size: 24px; margin: 16px 0 6px; }
+    .empty .icon { width: 64px; height: 64px; border-radius: 18px; background: var(--brand-soft); display: grid; place-items: center; margin: 0 auto; }
+    .accept-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 22px; border-top: 1px solid var(--line); background: var(--surface); }
+    .accept-bar p { color: var(--muted); font-size: 14px; }
+    .stats { display: flex; gap: 16px; }
+
+    @media (max-width: 800px) {
+      .dashboard { grid-template-columns: 1fr; grid-template-rows: 40% 60%; }
+      .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/">
+      <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg></span>
+      Theripo <span class="tag tag-muted" style="font-family: var(--sans)">Therapist</span>
+    </a>
+    <div class="header-meta" id="header-user" hidden>
+      <span>Signed in as <strong id="me-name" style="color: var(--ink)"></strong></span>
+      <button class="btn btn-ghost btn-sm" id="logout-btn">Sign out</button>
+    </div>
+  </header>
+
+  <!-- Login -->
+  <section id="view-login" class="center-wrap" hidden>
+    <form id="login-form" class="card form-card" style="max-width: 440px" novalidate>
+      <h1>Therapist sign in</h1>
+      <p class="lede">Use any display name — clients will only ever see this name.</p>
+      <div id="login-error" class="error" hidden></div>
+      <div class="field">
+        <label for="login-name">Display name</label>
+        <input id="login-name" type="text" maxlength="40" placeholder="e.g. Dr. Morgan" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="login-code">Access code</label>
+        <input id="login-code" type="password" placeholder="Staff access code">
+      </div>
+      <button class="btn btn-block" type="submit" id="login-btn">Sign in</button>
+      <p class="demo-hint">Demo access code: <code>care2026</code></p>
+    </form>
+  </section>
+
+  <!-- Dashboard -->
+  <section id="view-dashboard" class="dashboard" hidden>
+    <aside class="sidebar">
+      <div class="sidebar-scroll">
+        <div class="section-title">Waiting room <span class="count" id="waiting-count">0</span></div>
+        <div id="waiting-list"></div>
+        <div class="section-title">Your conversations</div>
+        <div id="mine-list"></div>
+      </div>
+    </aside>
+
+    <div class="main" id="main">
+      <div class="empty" id="empty-state">
+        <div>
+          <div class="icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#2e5d58" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg></div>
+          <h2>Welcome, <span id="welcome-name"></span></h2>
+          <p id="empty-text">Select someone from the waiting room to read their intake and start a conversation.</p>
+        </div>
+      </div>
+
+      <div class="chat-shell" id="chat" hidden>
+        <div class="chat-head">
+          <div class="who">
+            <div class="avatar" id="client-avatar"></div>
+            <div>
+              <h2 id="client-name"></h2>
+              <div class="sub" id="client-sub"></div>
+            </div>
+          </div>
+          <button class="btn btn-danger btn-sm" id="end-btn">End conversation</button>
+        </div>
+        <div class="messages" id="messages"></div>
+        <div class="accept-bar" id="accept-bar">
+          <p>This person is waiting. Accepting will let them know you've joined.</p>
+          <button class="btn" id="accept-btn">Accept &amp; start chat</button>
+        </div>
+        <form class="composer" id="composer">
+          <textarea id="message-input" rows="1" placeholder="Write a reply…" maxlength="2000"></textarea>
+          <button class="btn" type="submit">Send</button>
+        </form>
+        <div class="composer-note" id="ended-note" hidden>This conversation has ended.</div>
+      </div>
+    </div>
+  </section>
+
+  <script src="/common.js"></script>
+  <script>
+    const STORAGE_KEY = 'theripo.therapist.token';
+    const $ = (id) => document.getElementById(id);
+
+    let token = null;
+    let me = null;
+    let stream = null;
+    let sessions = [];          // summaries from the server
+    const details = new Map();  // sessionId -> full session with messages
+    const unread = new Map();   // sessionId -> count
+    let selectedId = null;
+
+    // ----- Auth -----
+    $('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      $('login-error').hidden = true;
+      $('login-btn').disabled = true;
+      try {
+        const data = await api('/api/therapist/login', {
+          method: 'POST',
+          body: { name: $('login-name').value, code: $('login-code').value },
+        });
+        token = data.token;
+        try { sessionStorage.setItem(STORAGE_KEY, token); } catch {}
+        enterDashboard(data.therapist);
+      } catch (err) {
+        $('login-error').textContent = err.message;
+        $('login-error').hidden = false;
+      } finally {
+        $('login-btn').disabled = false;
+      }
+    });
+
+    $('logout-btn').addEventListener('click', async () => {
+      try { await api('/api/therapist/logout', { method: 'POST', token }); } catch {}
+      signOut();
+    });
+
+    function signOut() {
+      stream?.close();
+      token = null; me = null; sessions = []; selectedId = null;
+      details.clear(); unread.clear();
+      try { sessionStorage.removeItem(STORAGE_KEY); } catch {}
+      $('login-form').reset();
+      $('header-user').hidden = true;
+      $('view-dashboard').hidden = true;
+      $('view-login').hidden = false;
+    }
+
+    function enterDashboard(therapist) {
+      me = therapist;
+      $('me-name').textContent = me.name;
+      $('welcome-name').textContent = me.name;
+      $('header-user').hidden = false;
+      $('view-login').hidden = true;
+      $('view-dashboard').hidden = false;
+      connect();
+    }
+
+    // ----- Live updates -----
+    function connect() {
+      stream?.close();
+      stream = new EventSource(`/api/therapist/stream?token=${encodeURIComponent(token)}`);
+      stream.addEventListener('sessions', (e) => {
+        sessions = JSON.parse(e.data);
+        renderSidebar();
+        syncSelected();
+      });
+      stream.addEventListener('message', (e) => {
+        const { sessionId, message } = JSON.parse(e.data);
+        addMessage(sessionId, message);
+      });
+      stream.onerror = async () => {
+        try { await api('/api/therapist/me', { token }); } catch (err) { if (err.status === 401) signOut(); }
+      };
+    }
+
+    function addMessage(sessionId, message) {
+      const full = details.get(sessionId);
+      if (full) {
+        if (full.messages.some((m) => m.id === message.id)) return;
+        full.messages.push(message);
+      }
+      if (sessionId === selectedId) {
+        const box = $('messages');
+        box.appendChild(renderMessage(message, 'therapist'));
+        scrollToBottom(box);
+      } else if (message.from === 'client') {
+        unread.set(sessionId, (unread.get(sessionId) || 0) + 1);
+        renderSidebar();
+      }
+    }
+
+    // ----- Sidebar -----
+    function renderSidebar() {
+      const waiting = sessions.filter((s) => s.status === 'waiting').sort((a, b) => a.createdAt - b.createdAt);
+      const mine = sessions.filter((s) => s.therapistId === me.id).sort((a, b) => {
+        if (a.status !== b.status) return a.status === 'active' ? -1 : 1;
+        return b.updatedAt - a.updatedAt;
+      });
+
+      $('waiting-count').textContent = waiting.length;
+      fillList($('waiting-list'), waiting, 'Nobody is waiting right now.', (s) => s.details);
+      fillList($('mine-list'), mine, 'Accepted conversations will appear here.', (s) =>
+        s.lastMessage ? `${s.lastMessage.from === 'therapist' ? 'You: ' : ''}${s.lastMessage.text}` : s.details);
+    }
+
+    function fillList(container, items, emptyText, previewOf) {
+      if (!items.length) {
+        container.replaceChildren(el('div', 'list-empty', emptyText));
+        return;
+      }
+      container.replaceChildren(...items.map((s) => {
+        const btn = el('button', `item${s.id === selectedId ? ' selected' : ''}`);
+        btn.type = 'button';
+        btn.addEventListener('click', () => select(s.id));
+
+        const body = el('div', 'body');
+        const row = el('div', 'row');
+        row.append(el('span', 'name', s.clientName), el('span', 'time', timeAgo(s.status === 'waiting' ? s.createdAt : s.updatedAt)));
+
+        const tags = el('div', 'tags');
+        tags.appendChild(el('span', 'tag tag-accent', s.topic));
+        if (s.status === 'ended') tags.appendChild(el('span', 'tag tag-muted', 'Ended'));
+        const count = unread.get(s.id);
+        if (count) tags.appendChild(el('span', 'badge', String(count)));
+
+        body.append(row, el('div', 'preview', previewOf(s)), tags);
+        btn.append(el('div', 'avatar', initials(s.clientName)), body);
+        return btn;
+      }));
+    }
+
+    // Keep the time-ago labels fresh.
+    setInterval(() => { if (me) renderSidebar(); }, 30000);
+
+    // ----- Conversation pane -----
+    async function select(id) {
+      selectedId = id;
+      unread.delete(id);
+      renderSidebar();
+      try {
+        const { session } = await api(`/api/therapist/sessions/${id}`, { token });
+        details.set(id, session);
+        if (selectedId === id) renderChat();
+      } catch (err) {
+        if (err.status === 401) return signOut();
+        showEmpty(err.message);
+      }
+    }
+
+    function showEmpty(text) {
+      selectedId = null;
+      $('chat').hidden = true;
+      $('empty-state').hidden = false;
+      $('empty-text').textContent = text || 'Select someone from the waiting room to read their intake and start a conversation.';
+      renderSidebar();
+    }
+
+    // When the session list changes, update the open conversation's status.
+    function syncSelected() {
+      if (!selectedId) return;
+      const summary = sessions.find((s) => s.id === selectedId);
+      if (!summary) return showEmpty('That person was picked up by another therapist.');
+      const full = details.get(selectedId);
+      if (full && full.status !== summary.status) {
+        Object.assign(full, { status: summary.status, therapistId: summary.therapistId, therapistName: summary.therapistName });
+        renderChrome(full);
+      }
+    }
+
+    function renderChat() {
+      const s = details.get(selectedId);
+      $('empty-state').hidden = true;
+      $('chat').hidden = false;
+
+      const intake = el('div', 'intake');
+      intake.append(el('div', 'label', `Intake · ${s.topic}`), el('p', null, s.details));
+      const box = $('messages');
+      box.replaceChildren(intake, ...s.messages.map((m) => renderMessage(m, 'therapist')));
+      scrollToBottom(box);
+      renderChrome(s);
+    }
+
+    function renderChrome(s) {
+      $('client-name').textContent = s.clientName;
+      $('client-avatar').textContent = initials(s.clientName);
+      const statusText = { waiting: `Waiting since ${formatTime(s.createdAt)}`, active: 'Active conversation', ended: 'Conversation ended' };
+      $('client-sub').textContent = `${s.topic} · ${statusText[s.status]}`;
+
+      $('accept-bar').hidden = s.status !== 'waiting';
+      $('composer').hidden = s.status !== 'active';
+      $('ended-note').hidden = s.status !== 'ended';
+      $('end-btn').hidden = s.status !== 'active';
+      if (s.status === 'active') $('message-input').focus();
+    }
+
+    $('accept-btn').addEventListener('click', async () => {
+      const id = selectedId;
+      $('accept-btn').disabled = true;
+      try {
+        const { session } = await api(`/api/therapist/sessions/${id}/accept`, { method: 'POST', token });
+        details.set(id, session);
+        if (selectedId === id) renderChat();
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        $('accept-btn').disabled = false;
+      }
+    });
+
+    $('end-btn').addEventListener('click', async () => {
+      if (!confirm('End this conversation? The client will be notified.')) return;
+      try { await api(`/api/therapist/sessions/${selectedId}/end`, { method: 'POST', token }); }
+      catch (err) { alert(err.message); }
+    });
+
+    const clearComposer = wireComposer($('message-input'), () => $('composer').requestSubmit());
+
+    $('composer').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = $('message-input').value.trim();
+      if (!text || !selectedId) return;
+      const id = selectedId;
+      clearComposer();
+      try {
+        const { message } = await api(`/api/therapist/sessions/${id}/message`, { method: 'POST', token, body: { text } });
+        addMessage(id, message);
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+
+    // ----- Resume after refresh -----
+    (async function init() {
+      let saved = null;
+      try { saved = sessionStorage.getItem(STORAGE_KEY); } catch {}
+      if (!saved) { $('view-login').hidden = false; return; }
+      try {
+        token = saved;
+        const { therapist } = await api('/api/therapist/me', { token });
+        enterDashboard(therapist);
+      } catch {
+        signOut();
+      }
+    })();
+  </script>
+</body>
+</html>
