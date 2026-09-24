@@ -23,7 +23,9 @@ To try both sides at once, open the client page and the therapist page in two se
 - `server.js` — plain Node HTTP server. Stores sessions in memory and pushes live updates with Server-Sent Events.
 - `public/` — static pages (`index.html`, `client.html`, `therapist.html`), shared `styles.css` and `common.js`.
 
-Everything is in memory, including shared files, so restarting the server wipes all conversations. Ended conversations and their files are also deleted an hour after they end. Files can only be opened by the client and therapist in that conversation. Only a SHA-256 hash of the therapist access code is stored in `server.js`. To use a different code, set `THERAPIST_CODE_HASH` to the hash of the new code:
+Everything is in memory, including shared files, so restarting the server wipes all conversations. Ended conversations and their files are also deleted an hour after they end. Files can only be opened by the client and therapist in that conversation.
+
+Therapists can switch between **Available** and **Away**. When someone joins the waiting room, every available therapist with the dashboard open gets a chime, a pop-up in the dashboard and, if they turned notifications on, a desktop notification (only the client's chosen name and topic are shown, never what they wrote). Only a SHA-256 hash of the therapist access code is stored in `server.js`. To use a different code, set `THERAPIST_CODE_HASH` to the hash of the new code:
 
 ```bash
 node -e "console.log(require('crypto').createHash('sha256').update('your code').digest('hex'))"
